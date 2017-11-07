@@ -32,7 +32,6 @@ class CharEncoder(nn.Module):
                                          out_channels=num,
                                          kernel_size=size,
                                          stride=1))
-        # self.hw = ''''''
         self.biGRU = nn.GRU(input_size=self.k_sum,
                             hidden_size=en_H,
                             num_layers=en_layers,
@@ -48,8 +47,6 @@ class CharEncoder(nn.Module):
         # c0 = Variable(torch.zeros(self.en_layers * self.bi, self.N, self.en_H).type(cudafloat))
         # return h0, c0
         return h0
-
-
 
     def pad_conv_and_pool(self, x, conv):
         # padding for half convolution (aka 'same' padding), which needs asymetric padding

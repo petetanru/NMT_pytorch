@@ -12,15 +12,19 @@ from collections import OrderedDict
 from tcc import tcc
 
 ''' loading data and dict '''
+wp = {
+    'th':'th-vi/bpe/th-vi_train_bpe_ready.th',
+    'en':'',
+    'vi':''
+}
 
-all_en_letters = string.ascii_lowercase + " \".,;:'-?!" + "\n"
-th_pattern = re.compile(r"[^\u0E00-\u0E7F? ']|^'|'$|''")
+all_en_letters = string.hexdigits + string.ascii_lowercase + " \".,;:'-?!" + "\n"
+th_pattern = re.compile(r"[^\u0E00-\u0E7F? 1-9']|^'|'$|''")
 
-def en_unicodeToAscii(s):
+def vi_unicodeToAscii(s):
     return ''.join(
         c for c in unicodedata.normalize('NFD', s.lower())
         if unicodedata.category(c) != 'Mn'
-        and c in all_en_letters
     )
 
 def th_unicode(string):
@@ -30,66 +34,24 @@ def th_unicode(string):
     sent = ' '.join(sent.split())
     return sent
 
-def load_data_en_word(path):
-    output = []
-    input_file = os.path.join(path)
-    with open(input_file, "r", encoding='utf-8') as f:
-        data = f.read().split('\n')
-        for sent in data:
-            sent = en_unicodeToAscii(sent)
-            output.append(nltk.word_tokenize(sent))
-    return output
+def en_unicodeToAscii(s):
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s.lower())
+        if unicodedata.category(c) != 'Mn'
+        and c in all_en_letters
+    )
 
-def load_data_en_char(path):
-    output = []
-    input_file = os.path.join(path)
-    with open(input_file, "r", encoding='utf-8') as f:
-        data = f.read().split('\n')
-        for sent in data:
-            output.append(en_unicodeToAscii(sent))
-    return output
-
-# # load only when building thai vocab, otherwise comment out to avoid init tensorflow
-# import deepcut
-# def load_data_th_word(path):
-#     output = []
-#     input_file = os.path.join(path)
-#     with open(input_file, "r", encoding='utf-8') as f:
-#         data = f.read().split('\n')
-#         for sent in data:
-#             sent = th_unicode(sent)
-#             output.append(deepcut.tokenize(sent))
-#     return output
-
-def load_data_th_char(path):
-    output = []
-    input_file = os.path.join(path)
-    with open(input_file, "r", encoding='utf-8') as f:
-        data = f.read().split('\n')
-        for sent in data:
-            output.append(th_unicode(sent))
-    return output
-
-def load_data_th_tcc(path):
-    output = []
-    input_file = os.path.join(path)
-    with open(input_file, "r", encoding='utf-8') as f:
-        data = f.read().split('\n')
-        for sent in data:
-            raw_tcc = tcc(sent)
-            reformat_tcc = raw_tcc.split('/')
-            output.append(reformat_tcc)
-    return output
-
-def build_vocab_tcc(file1, src):
+# load only when building thai vocab, otherwise comment out to avoid init tensorflow
+def build_vocab(file, source, vocab_type, lang, lang_pair):
+    # for word, tcc, and bpe
     # tweaked version of: https://github.com/nyu-dl/dl4mt-c2c/blob/master/preprocess/build_dictionary_char.py
     # TODO: figure out why the original function omit characters like Ã.
     word_dict = {}
     master_set = set()
-    for sample in file1:
+    for sample in file:
         set_letter = set(sample)
         master_set = master_set.union(set_letter)
-    if src:
+    if source:
         # 0 -> ZERO
         # 1 -> UNK
         # 2 -> SOS
@@ -97,120 +59,114 @@ def build_vocab_tcc(file1, src):
         tokens = "ZERO UNK SOS EOS".split()
     else:
         tokens = "EOS UNK".split()
-
+    if vocab_type == 'bpe':
+        tokens.append(' ')
     for ii, aa in enumerate(tokens):
         word_dict[aa] = ii
-
     for ii, ww in enumerate(master_set):
         word_dict[ww] = ii + len(tokens)
-
-    if src:
-        with open('input.th-en.tcc.pkl', 'wb') as f:
-            pickle.dump(word_dict, f)
-    else:
-        with open('tgt.th-en.tcc.pkl', 'wb') as f:
-            pickle.dump(word_dict, f)
+    src_name = 'src' if source else 'tgt'
+    with open('%s/%s.%s.%s.%s.pkl' % (lang_pair, lang_pair, vocab_type, src_name, lang), 'wb') as f:
+        pickle.dump(word_dict, f)
     return word_dict
 
-
-def build_vocab_word(file1, src):
-    # tweaked version of: https://github.com/nyu-dl/dl4mt-c2c/blob/master/preprocess/build_dictionary_char.py
-    # TODO: figure out why the original function omit characters like Ã.
-    word_dict = {}
-    master_set = set()
-    for sample in file1:
-        set_letter = set(sample)
-        master_set = master_set.union(set_letter)
-
-    if src:
-        # 0 -> ZERO
-        # 1 -> UNK
-        # 2 -> SOS
-        # 3 -> EOS
-        tokens = "ZERO UNK SOS EOS".split()
+def wp_encode_gen(data, lang):
+    import collections
+    import subword_text_tokenizer
+    subword_tokenizer = subword_text_tokenizer.SubwordTextTokenizer()
+    token_counts = collections.Counter()
+    if lang == 'th':
+        with open(wp['th'], 'r', encoding='utf-8') as f:
+            bpe_file = f.read().split('\n')
+            for bpe_sent in bpe_file:
+                token_counts.update(bpe_sent.split())
+        encoder = subword_tokenizer.build_to_target_size(8000, token_counts, 2, 10)
     else:
-        tokens = "EOS UNK".split()
+        raise NotImplementedError
+    return encoder
 
-    for ii, aa in enumerate(tokens):
-        word_dict[aa] = ii
+def load_data_en(path, lang_pair, vocab_type, source, train):
+    output = []
+    input_file = os.path.join(path)
+    with open(input_file, "r", encoding='utf-8') as f:
+        data = f.read().split('\n')
+        for sent in data:
+            sent = en_unicodeToAscii(sent) # uncomment to accept all characters
+            if vocab_type == 'w':
+                output.append(nltk.word_tokenize(sent))
+            elif vocab_type == 'c':
+                output.append(sent)
+    if train is True:
+        en_dict = build_vocab(output, source, vocab_type, 'en', lang_pair)
+        return output, en_dict
+    return output
 
-    for ii, ww in enumerate(master_set):
-        word_dict[ww] = ii + len(tokens)
+def load_data_th(path, lang_pair, vocab_type, source, train):
+    output = []
+    lang = 'th'
+    input_file = os.path.join(path)
+    with open(input_file, "r", encoding='utf-8') as f:
+        data = f.read().split('\n')
+        if vocab_type == 'w':
+            import deepcut
+            for sent in data:
+                sent = th_unicode(sent)  # comment out to allow numbers
+                output.append(deepcut.tokenize(sent))
+        elif vocab_type == 'c':
+            for sent in data:
+                # sent = th_unicode(sent)
+                output.append(sent)
+        elif vocab_type == 'tcc':
+            for sent in data:
+                raw_tcc = tcc(sent)
+                reformat_tcc = raw_tcc.split('/')
+                output.append(reformat_tcc)
+        elif vocab_type == 'bpe':
+            for sent in data:
+                # word_list = sent.replace('@@', '').split()
+                word_list = sent.split()
+                output.append(word_list)
+        elif vocab_type == 'wp':
+            encoder = wp_encode_gen(data, lang)
+            for sent in data:
+                new_sent = encoder.encode(sent)
+                output.append(new_sent)
+    if train is True:
+        th_dict = build_vocab(output, source, vocab_type, lang=lang, lang_pair=lang_pair)
+        return output, th_dict
+    return output
 
-    if src:
-        with open('input.th-en.word.pkl', 'wb') as f:
-            pickle.dump(word_dict, f)
-    else:
-        with open('tgt.th-en.word.pkl', 'wb') as f:
-            pickle.dump(word_dict, f)
-    return word_dict
-
-def build_vocab_char(filename, src, lang):
-    print('Processing', filename)
-    word_freqs = OrderedDict()
-    with open(filename, 'r', encoding='utf-8') as f:
-        for number, line in enumerate(f):
-            if number % 20000 == 0:
-                print('line', number)
-            if lang == 'EN':
-                line = en_unicodeToAscii(line)
-                # line = nltk.word_tokenize(line)
-            elif lang == 'TH':
-                line = th_unicode(line)
-
-            words_in = list(line)
-            for w in words_in:
-                if w not in word_freqs:
-                    word_freqs[w] = 0
-                word_freqs[w] += 1
-
-    print('count finished')
-
-    words = list(word_freqs.keys())
-    freqs = list(word_freqs.values())
-
-    sorted_idx = np.argsort(freqs)
-    sorted_words = [words[ii] for ii in sorted_idx[::-1]]
-
-    worddict = OrderedDict()
-    if src:
-        # 0 -> ZERO
-        # 1 -> UNK
-        # 2 -> SOS
-        # 3 -> EOS
-        tokens = "ZERO UNK SOS EOS".split()
-    else:
-        tokens = "EOS UNK".split()
-
-    for ii, aa in enumerate(tokens):
-        worddict[aa] = ii
-    print(worddict)
-
-    for ii, ww in enumerate(sorted_words):
-        worddict[ww] = ii + len(tokens)
-
-    print('start dump')
-    with open('%s.%d.pkl' % (filename, len(tokens)), 'wb') as f:
-        pickle.dump(worddict, f)
-
-    f.close()
-    print('Done')
-    print(len(worddict))
-    return worddict
+def load_data_vi(path, lang_pair, vocab_type, source, train):
+    output = []
+    input_file = os.path.join(path)
+    with open(input_file, "r", encoding='utf-8') as f:
+        data = f.read().split('\n')
+        for sent in data:
+            if vocab_type == 'w':
+                output.append(nltk.word_tokenize(sent))
+            elif vocab_type == 'c':
+                output.append(sent)
+            elif vocab_type == 'bpe':
+                word_list = sent.split()
+                output.append(word_list)
+    if train is True:
+        vi_dict = build_vocab(output, source, vocab_type, 'vi', lang_pair)
+        return output,vi_dict
+    return output
 
 ''' preprocessing '''
 
 def filter_data_len(data, target, mode):
     len_order = []
     x_len_order, y_len_order = [], []
-    for i in range(len(data)):
+    for i in range(len(target)):
+        # print(len(data), len(target))
         len_data = len(data[i])
         len_target = len(target[i])
         if mode in ('w2w', 'c2c'):
-
             max_len = max((len_data, len_target))
             len_order.append(max_len)
-        elif mode in ('c2w','tcc2w'):
+        elif mode in ('c2w','tcc2w', 'bpe2w', 'wp2w'):
             x_len_order.append(len_data)
             y_len_order.append(len_target)
 
@@ -230,7 +186,7 @@ def filter_data_len(data, target, mode):
         y_three_list = zip(len_order, data, target)
         train_data = [x for l, x, y in x_three_list if l < 251 and l > 0]
         train_target = [y for l, x, y in y_three_list if l < 251 and l > 0]
-    elif mode == 'tcc2w':
+    elif mode in ('tcc2w', 'bpe2w', 'wp2w'):
         four_listx = zip(x_len_order, y_len_order, data, target)
         four_listy = zip(x_len_order, y_len_order, data, target)
         train_data = [x for lx, ly, x, y in four_listx if lx < 51 and ly < 31 and ly > 0]
@@ -252,7 +208,7 @@ def train_vectorize(x, y, inp_dict, tgt_dict, mode):
     if mode in ('w2w', 'c2c'):
         seq_len_x = seq_len_finder(x, y)
         seq_len_y = seq_len_x
-    elif mode in('c2w','tcc2w'):
+    elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
         seq_len_x = seq_len_finder(x)
         seq_len_y = seq_len_finder(y)
     Xtensor = torch.zeros(len(x), seq_len_x+1).long()
@@ -261,6 +217,32 @@ def train_vectorize(x, y, inp_dict, tgt_dict, mode):
         for t, char in enumerate(seq):
             try:
                 Xtensor[i, t] = inp_dict[seq[t]]
+            except:
+                Xtensor[i, t] = inp_dict['UNK']
+        Xtensor[i, len(seq)] = inp_dict['EOS']
+    for i_y, seq_y in enumerate(y):
+        for t_y, char_y in enumerate(seq_y):
+            try:
+                ytensor[i_y, t_y] = tgt_dict[seq_y[t_y]]
+            except:
+                ytensor[i_y, t_y] = tgt_dict['UNK']
+        ytensor[i_y, len(seq_y)] = tgt_dict['EOS']
+    return Xtensor, ytensor, seq_len_x, seq_len_y
+
+def google_train_vectorize(x, y, inp_dict, tgt_dict, lang, mode):
+    if mode in ('w2w', 'c2c'):
+        seq_len_x = seq_len_finder(x, y)
+        seq_len_y = seq_len_x
+    elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
+        seq_len_x = seq_len_finder(x)
+        seq_len_y = seq_len_finder(y)
+    Xtensor = torch.zeros(len(x), seq_len_x+2).long()
+    ytensor = torch.zeros(len(x), seq_len_y+2).long()
+    for i, seq in enumerate(x):
+        for t, char in enumerate(seq):
+            Xtensor[i, 0] = inp_dict['<%s>' % lang]
+            try:
+                Xtensor[i, t+1] = inp_dict[seq[t]]
             except:
                 Xtensor[i, t] = inp_dict['UNK']
         Xtensor[i, len(seq)] = inp_dict['EOS']
