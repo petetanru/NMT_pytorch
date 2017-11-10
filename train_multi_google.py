@@ -36,16 +36,16 @@ lang_pair1 = source_lang_1 + '-' + tgt_lang
 lang_pair2 = source_lang_2 + '-' + tgt_lang
 
 # model, choose between c - char,  w - word, bpe - byte-pair encoding
-source_type = 'c'
+source_type = 'w'
 tgt_type = 'w'
-cnn = True
+cnn = False
 mode = source_type + '2' + tgt_type  # w2w, w2c, c2c
 
 ''' optim '''
 learning_rate = 1e-4
 dropout = 0.2
 grad_clip = 1
-N = 256
+N = 128
 
 ''' Encoder config '''
 embed_dim = 128 if source_type == 'c' else 256
@@ -54,10 +54,10 @@ en_bi = False
 en_layers = 1
 en_H = 256
 
-# smaller # of grams for tcc?
 if source_type == 'tcc' and cnn is True:
     k_num = [300, 300, 350, 350]
     k_size = [1, 2, 3, 4]
+
 else:
     k_num = [200, 200, 250, 250, 300, 300, 300, 300]
     # k_num = [300, 300, 350, 350, 400, 400, 400, 400]
@@ -82,10 +82,25 @@ train_data1, train_target1, val_data1, val_target1, inp_dict1, tgt_dict1 = load_
 train_data2, train_target2, val_data2, val_target2, inp_dict2, tgt_dict2 = load_data(lang_pair2, source_type, tgt_type)
 
 # combine dicts
-inp_dict = {**inp_dict1, **inp_dict2}
-tgt_dict = {**tgt_dict1, **tgt_dict2}
+raw_inp_dict = {**inp_dict2, **inp_dict1}
+raw_tgt_dict = {**tgt_dict2, **tgt_dict1}
+
+inp_dict, tgt_dict = {}, {}
+count, count2 = 0, 0
+
+for k,v in raw_inp_dict.items():
+    inp_dict[k] = count
+    count += 1
+for k2,v2 in raw_tgt_dict.items():
+    tgt_dict[k2] = count2
+    count2 += 1
+
+google_token = {'<th>':len(inp_dict)+1, '<vi>': len(inp_dict)+2}
+
+inp_dict.update(google_token)
 
 tgt_dict_i2c = {v: k for k, v in tgt_dict.items()}
+
 inp_sz = len(inp_dict)
 out_sz = len(tgt_dict)
 print("size of inp and out dict", inp_sz, out_sz)
@@ -110,14 +125,6 @@ print("len of val data and tgt_type", seq_len_finder(val_data1), seq_len_finder(
 train_data1, train_target1 = train_data_fil1, train_target_fil1
 train_data2, train_target2 = train_data_fil2, train_target_fil2
 # val_data, val_target = val_data_fil, val_target_fil
-
-train_data = train_data1 + train_data2
-train_target = train_target1 + train_target2
-
-import random
-combined = list(zip(train_data, train_target))
-random.shuffle(combined)
-train_data, train_target = zip(*combined)
 
 #############
 ### Train ###
@@ -170,40 +177,54 @@ for epoch in range(n_epochs):
     decoder.train()
     for batch in range(0, len(train_data1) - train_remainder1, N):
         loss = 0
-        # data_raw1 = train_data1[batch:int(batch+N/2)]
-        # data_raw2 = train_data2[int(batch+N/2):batch + N]
-        # target_raw1 = train_target1[batch:int(batch + N/2)]
-        # target_raw2 = train_target2[int(batch+N/2):batch + N]
-        #
-        # data_raw = data_raw1 + data_raw2
-        # target_raw = target_raw1 + target_raw2
 
-        data_raw = train_data[batch:batch + N]
-        target_raw = train_target[batch:batch + N]
-        data, target, _seq_len_x, seq_len_y = train_vectorize(data_raw, target_raw, inp_dict, tgt_dict, mode=mode)
-        data, target = data.cuda(), target.cuda()
-        data, target = Variable(data), Variable(target)
-        en_hidden = repackage_hidden(en_hidden)
-        de_hidden = repackage_hidden(de_hidden)
+        data_raw1 = train_data1[batch:batch + N]
+        data_raw2 = train_data2[batch:batch + N]
+        target_raw1 = train_target1[batch:batch + N]
+        target_raw2 = train_target2[batch:batch + N]
 
-        data, target, _seq_len_x, seq_len_y = train_vectorize(data_raw, target_raw, inp_dict, tgt_dict, mode=mode)
-        data, target = data.cuda(), target.cuda()
-        data, target = Variable(data), Variable(target)
+        ### lang 1
+
+        data1, target1, _seq_len_x1, seq_len_y1 = google_train_vectorize(data_raw1, target_raw1, inp_dict, tgt_dict, lang=source_lang_1, mode=mode)
+        data1, target1 = data1.cuda(), target1.cuda()
+        data1, target1 = Variable(data1), Variable(target1)
         en_hidden = repackage_hidden(en_hidden)
         de_hidden = repackage_hidden(de_hidden)
 
         # forward, backward, optimize
-        en_out, en_hidden = encoder(data, en_hidden)
+        en_out, en_hidden = encoder(data1, en_hidden)
         de_hidden = en_hidden
         de_in = Variable(torch.zeros(decoder.N, 1).type(cudalong))
 
-        for di in range(seq_len_y):
+        for di in range(seq_len_y1):
             de_out, de_hidden, attn = decoder(de_in, en_out, de_hidden)  # (W=1,N,Out)
             de_out = de_out.squeeze(0)  # (N, Out)
-            target_T = target.transpose(0, 1)  # (N,W) => (W, N)
+            target_T = target1.transpose(0, 1)  # (N,W) => (W, N)
             loss += criterion(de_out, target_T[di])  # (N,Out) and (N)
             de_in = target_T[di].unsqueeze(1)
-        train_loss += loss.data[0] / seq_len_y
+
+        ## lang 2
+
+        data2, target2, _seq_len_x, seq_len_y2 = google_train_vectorize(data_raw2, target_raw2, inp_dict, tgt_dict, lang=source_lang_2, mode=mode)
+        data2, target2 = data2.cuda(), target2.cuda()
+        data2, target2 = Variable(data2), Variable(target2)
+        en_hidden = repackage_hidden(en_hidden)
+        de_hidden = repackage_hidden(de_hidden)
+
+        # forward, backward, optimize
+        en_out, en_hidden = encoder(data2, en_hidden)
+        de_hidden = en_hidden
+        de_in = Variable(torch.zeros(decoder.N, 1).type(cudalong))
+
+        for di in range(seq_len_y2):
+            de_out, de_hidden, attn = decoder(de_in, en_out, de_hidden)  # (W=1,N,Out)
+            de_out = de_out.squeeze(0)  # (N, Out)
+            target_T = target2.transpose(0, 1)  # (N,W) => (W, N)
+            loss += criterion(de_out, target_T[di])  # (N,Out) and (N)
+            de_in = target_T[di].unsqueeze(1)
+
+
+        train_loss += loss.data[0] / (seq_len_y1 + seq_len_y2)
         en_optimizer.zero_grad()
         de_optimizer.zero_grad()
         loss.backward(retain_variables=True)
@@ -211,8 +232,6 @@ for epoch in range(n_epochs):
         torch.nn.utils.clip_grad_norm(decoder.parameters(), grad_clip)
         en_optimizer.step()
         de_optimizer.step()
-
-
 
     # evaluate with validation set
     encoder.eval()
@@ -224,7 +243,7 @@ for epoch in range(n_epochs):
             trans_list = [[] for _ in range(N)]
             data_raw = val_data1[batch:batch + N]
             target_raw = val_target1[batch:batch + N]
-            data, target, _seq_len_x, seq_len_y = train_vectorize(data_raw, target_raw, inp_dict, tgt_dict, mode=mode)
+            data, target, _seq_len_x, seq_len_y = google_train_vectorize(data_raw, target_raw, inp_dict, tgt_dict, lang = source_lang_1, mode=mode)
             data, target = data.cuda(), target.cuda()
             data, target = Variable(data, volatile=True), Variable(target, volatile=True)
             en_hidden = repackage_hidden(en_hidden)
@@ -306,8 +325,8 @@ for epoch in range(n_epochs):
           (epoch + 1, train_loss, val_loss, val_acc,
            time.time() - start_time, bleu_score))
 
-    torch.save(encoder.state_dict(), 'last_encoder_weight_multi_%s_%s' % (lang_pair1, lang_pair2))
-    torch.save(decoder.state_dict(), 'last_decoder_weight_multi_%s_%s' % (lang_pair1, lang_pair2))
+    torch.save(encoder.state_dict(), 'last_encoder_weight_multigoogle_%s_%s' % (lang_pair1, lang_pair2))
+    torch.save(decoder.state_dict(), 'last_decoder_weight_multigoogle_%s_%s' % (lang_pair1, lang_pair2))
 
     # normally save for best loss but in this case not so indicative.
     # if val_loss < best_val_loss:
@@ -318,6 +337,6 @@ for epoch in range(n_epochs):
 
     if bleu_score > best_bleu_score:
         best_bleu_score = bleu_score
-        torch.save(encoder.state_dict(), 'best_acc_encoder_weight_multi_%s-%s-%s' % (lang_pair1, lang_pair2, mode))
-        torch.save(decoder.state_dict(), 'best_acc_decoder_weight_multi_%s-%s-%s' % (lang_pair1, lang_pair2, mode))
+        torch.save(encoder.state_dict(), 'best_acc_encoder_weight_multigoogle_%s-%s-%s' % (lang_pair1, lang_pair2, mode))
+        torch.save(decoder.state_dict(), 'best_acc_decoder_weight_multigoogle_%s-%s-%s' % (lang_pair1, lang_pair2, mode))
         print('saving most bleu acc  model from epoch [%d]' % (epoch + 1))
