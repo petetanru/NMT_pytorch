@@ -36,7 +36,7 @@ lang_pair1 = source_lang_1 + '-' + tgt_lang
 lang_pair2 = source_lang_2 + '-' + tgt_lang
 
 # model, choose between c - char,  w - word, bpe - byte-pair encoding
-source_type = 'w'
+source_type = 'bpe'
 tgt_type = 'w'
 cnn = False
 mode = source_type + '2' + tgt_type  # w2w, w2c, c2c
@@ -45,7 +45,7 @@ mode = source_type + '2' + tgt_type  # w2w, w2c, c2c
 learning_rate = 1e-4
 dropout = 0.2
 grad_clip = 1
-N = 128
+N = 256
 
 ''' Encoder config '''
 embed_dim = 128 if source_type == 'c' else 256
@@ -95,14 +95,14 @@ for k2,v2 in raw_tgt_dict.items():
     tgt_dict[k2] = count2
     count2 += 1
 
-google_token = {'<th>':len(inp_dict)+1, '<vi>': len(inp_dict)+2}
-
+google_token = {'<th>':len(inp_dict), '<vi>': len(inp_dict)+1}
 inp_dict.update(google_token)
 
 tgt_dict_i2c = {v: k for k, v in tgt_dict.items()}
 
 inp_sz = len(inp_dict)
 out_sz = len(tgt_dict)
+
 print("size of inp and out dict", inp_sz, out_sz)
 print("sample input 1", train_data1[0])
 print("sample output 1", train_target1[0])
@@ -145,8 +145,8 @@ decoder = LuongDecoder(de_embed=de_embed, de_H=de_H, en_Hbi=en_Hbi, de_layers=de
                        out_sz=out_sz)
 
 if load_model is True:
-    encoder.load_state_dict(torch.load('last_encoder_weight_th-en'))
-    decoder.load_state_dict(torch.load('last_decoder_weight_th-en'))
+    encoder.load_state_dict(torch.load('best_acc_encoder_weight_multigoogle_%s-%s-%s' % (lang_pair1, lang_pair2, mode)))
+    decoder.load_state_dict(torch.load('best_acc_decoder_weight_multigoogle_%s-%s-%s' % (lang_pair1, lang_pair2, mode)))
     print("last model loaded")
 
 decoder.cuda()

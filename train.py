@@ -30,7 +30,7 @@ load_model = False
 
 ''' language pair  '''
 source_lang = 'th'
-tgt_lang = 'vi'
+tgt_lang = 'en'
 lang_pair = source_lang + '-' + tgt_lang
 
 # model, choose between c - char,  w - word, bpe - byte-pair encoding, wp - wordpiece
@@ -70,6 +70,7 @@ en_Hbi = en_H * (2 if en_bi == True else 1)
 
 ''' File path '''
 th_en_ref = "th-en/ted_test_th-en.en.tok_seg"
+# th_en_ref = "th-en_sent/ted_test_th-en.en.tok2"
 th_vi_ref = "th-vi/ted_test_th-vi.vi.tok"
 vi_en_ref = "vi-en/ted_test_vi-en.en.tok"
 
@@ -128,7 +129,7 @@ decoder.cuda()
 encoder.cuda()
 en_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
 de_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate)
-criterion = nn.NLLLoss(size_average=True)
+criterion = nn.NLLLoss(size_average=False)
 
 graph_train, graph_val = [], []
 best_val_loss = 100.0
