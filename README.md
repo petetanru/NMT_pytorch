@@ -1,6 +1,6 @@
 # NMT_pytorch
 NMT models implemented with pytorch.
-For explanations and reference, please see this [blog post](https://petetanru.github.io/projects/char-nmt.html). 
+For explanations and reference, please see this [blog post](https://petetanru.github.io/projects/th-nmt.html). 
 
 The file mainly serves as coding reference. It's in development stage, which means that you have to
 open up the code to do configs... (with the risk of tammering other parts of code..!)
