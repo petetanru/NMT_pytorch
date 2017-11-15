@@ -12,7 +12,7 @@ There are several steps you need to do before running the code.
 1. From TED Talk 2016, download the desired language pair xml.  
 2. When building up aligned text with WIT3's script, read through the perl script and stop at segments instead of running the entire script to build up sentences. If you want to use sentences, just make sure that Thai is processed as the source language, since it has no EOS punctuation and the script bases its decision on the target language's punctuation.
 
-**Evaluation***
+**Evaluation**
 1. Download Moses's BLEU, normalizer, and tokenizer script from [here](https://github.com/moses-smt/mosesdecoder). 
 2. Normalize and tokenizer your target test script, and make sure to do the same for the text you generate before calculating the score for the two files with the BLEU script. 
 
@@ -35,8 +35,8 @@ The easiest way though, which I can't do over github, is to message me and I can
 4. Deepcut
 5. pickle
 
-
-
+#### References
+See the [blog post](https://petetanru.github.io/projects/th-nmt.html)!
 
 
 
