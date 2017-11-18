@@ -36,7 +36,7 @@ The easiest way though, which I can't do over github, is to message me and I can
 5. pickle
 
 #### References
-See the [blog post](https://petetanru.github.io/projects/th-nmt.html)!
+See the blog post link above!
 
 
 
