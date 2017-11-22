@@ -1,3 +1,6 @@
+# IMPORTANT
+Nov 22, 2017 — Undergoing revision, which is likely to alter the conclusion. Thanks to Kyunghyun Cho for spotting out implementation error.
+
 # NMT_pytorch
 NMT models implemented with pytorch.
 For explanations and reference, please see this [medium blog](https://medium.com/@petepeeradejtanruangporn/experimenting-with-neural-machine-translation-for-thai-1681fd2b375a) or [beta blog post](https://petetanru.github.io/projects/th-nmt.html). 
