@@ -11,6 +11,7 @@ import numpy as np
 from collections import OrderedDict
 from tcc import tcc
 
+
 ''' loading data and dict '''
 wp = {
     'th':'th-vi/bpe/th-vi_train_bpe_ready.th',
@@ -58,7 +59,7 @@ def build_vocab(file, source, vocab_type, lang, lang_pair):
         # 3 -> EOS
         tokens = "ZERO UNK SOS EOS".split()
     else:
-        tokens = "EOS UNK".split()
+        tokens = "ZERO EOS UNK".split()
     if vocab_type == 'bpe':
         tokens.append(' ')
     for ii, aa in enumerate(tokens):
@@ -85,75 +86,6 @@ def wp_encode_gen(data, lang):
         raise NotImplementedError
     return encoder
 
-def load_data_en(path, lang_pair, vocab_type, source, train):
-    output = []
-    input_file = os.path.join(path)
-    with open(input_file, "r", encoding='utf-8') as f:
-        data = f.read().split('\n')
-        for sent in data:
-            sent = en_unicodeToAscii(sent) # uncomment to accept all characters
-            if vocab_type == 'w':
-                output.append(nltk.word_tokenize(sent))
-            elif vocab_type == 'c':
-                output.append(sent)
-    if train is True:
-        en_dict = build_vocab(output, source, vocab_type, 'en', lang_pair)
-        return output, en_dict
-    return output
-
-def load_data_th(path, lang_pair, vocab_type, source, train):
-    output = []
-    lang = 'th'
-    input_file = os.path.join(path)
-    with open(input_file, "r", encoding='utf-8') as f:
-        data = f.read().split('\n')
-        if vocab_type == 'w':
-            import deepcut
-            for sent in data:
-                sent = th_unicode(sent)  # comment out to allow numbers
-                output.append(deepcut.tokenize(sent))
-        elif vocab_type == 'c':
-            for sent in data:
-                # sent = th_unicode(sent)
-                output.append(sent)
-        elif vocab_type == 'tcc':
-            for sent in data:
-                raw_tcc = tcc(sent)
-                reformat_tcc = raw_tcc.split('/')
-                output.append(reformat_tcc)
-        elif vocab_type == 'bpe':
-            for sent in data:
-                # word_list = sent.replace('@@', '').split()
-                word_list = sent.split()
-                output.append(word_list)
-        elif vocab_type == 'wp':
-            encoder = wp_encode_gen(data, lang)
-            for sent in data:
-                new_sent = encoder.encode(sent)
-                output.append(new_sent)
-    if train is True:
-        th_dict = build_vocab(output, source, vocab_type, lang=lang, lang_pair=lang_pair)
-        return output, th_dict
-    return output
-
-def load_data_vi(path, lang_pair, vocab_type, source, train):
-    output = []
-    input_file = os.path.join(path)
-    with open(input_file, "r", encoding='utf-8') as f:
-        data = f.read().split('\n')
-        for sent in data:
-            if vocab_type == 'w':
-                output.append(nltk.word_tokenize(sent))
-            elif vocab_type == 'c':
-                output.append(sent)
-            elif vocab_type == 'bpe':
-                word_list = sent.split()
-                output.append(word_list)
-    if train is True:
-        vi_dict = build_vocab(output, source, vocab_type, 'vi', lang_pair)
-        return output,vi_dict
-    return output
-
 ''' preprocessing '''
 
 def filter_data_len(data, target, mode):
@@ -163,19 +95,19 @@ def filter_data_len(data, target, mode):
         # print(len(data), len(target))
         len_data = len(data[i])
         len_target = len(target[i])
-        if mode in ('w2w', 'c2c'):
+        if mode in ('c2c'):
             max_len = max((len_data, len_target))
             len_order.append(max_len)
-        elif mode in ('c2w','tcc2w', 'bpe2w', 'wp2w'):
+        elif mode in ('c2w','tcc2w', 'bpe2w', 'wp2w', 'w2w','bpe2bpe'):
             x_len_order.append(len_data)
             y_len_order.append(len_target)
 
 #     three_list = sorted(zip(len_order, data, target))
-    if mode == 'w2w':
-        x_three_list = zip(len_order, data, target)
-        y_three_list = zip(len_order, data, target)
-        train_data = [x for l, x, y in x_three_list if l < 31 and l > 0]
-        train_target = [y for l, x, y in y_three_list if l < 31 and l > 0]
+    if mode in ('w2w', 'bpe2bpe'):
+        x_three_list = zip(x_len_order, y_len_order, data, target)
+        y_three_list = zip(x_len_order, y_len_order, data, target)
+        train_data = [x for lx, ly, x, y in x_three_list if lx < 51 and lx > 0 and ly > 0]
+        train_target = [y for lx, ly, x, y in y_three_list if lx < 51 and lx > 0 and ly >0]
     elif mode == 'c2w':
         four_listx = zip(x_len_order, y_len_order, data, target)
         four_listy = zip(x_len_order, y_len_order, data, target)
@@ -204,6 +136,54 @@ def seq_len_finder(*args):
                 longest_sent = curr_len
     return longest_sent
 
+def sent2vec(x, y, inp_dict, tgt_dict):
+    vec_x, vec_y = [], []
+    for idx, sample in enumerate(x):
+        sent_array = []
+        for vocab_x in sample:
+            try:
+                vec_word = inp_dict[vocab_x]
+            except:
+                vec_word = inp_dict['UNK']
+            sent_array.append(vec_word)
+        sent_array.append(inp_dict['EOS'])
+        vec_x.append(sent_array)
+
+    for idx, sample in enumerate(y):
+        sent_array = []
+        for vocab_y in sample:
+            try:
+                vec_word = tgt_dict[vocab_y]
+            except:
+                vec_word = tgt_dict['UNK']
+            sent_array.append(vec_word)
+        sent_array.append(tgt_dict['EOS'])
+        vec_y.append(sent_array)
+
+    return vec_x, vec_y
+
+def vec2tensor(x_vec, y_vec):
+    lengths_x = [len(s) for s in x_vec]
+    lengths_y = [len(s) for s in y_vec]
+    N = len(x_vec)
+    idx = [i for i in range(N)]
+
+    max_len_x = max(lengths_x)
+    max_len_y = max(lengths_y)
+
+    # zip, sort by len, unzip
+    zip_vec = sorted(zip(lengths_x, lengths_y, x_vec, y_vec, idx), reverse=True)
+    lengths_x, lengths_y, vec_x, vec_y, sorted_idx = zip(*zip_vec)
+
+    xtensor = torch.zeros(N, max_len_x).long()
+    ytensor = torch.zeros(N, max_len_y).long()
+
+    for idx, [s_x, s_y] in enumerate(zip(vec_x, vec_y)):
+        xtensor[idx, :lengths_x[idx]] =  torch.LongTensor(s_x)
+        ytensor[idx, :lengths_y[idx]] =  torch.LongTensor(s_y)
+    return xtensor, ytensor, lengths_x, lengths_y, sorted_idx
+
+# Legacy
 def train_vectorize(x, y, inp_dict, tgt_dict, mode):
     if mode in ('w2w', 'c2c'):
         seq_len_x = seq_len_finder(x, y)
@@ -211,8 +191,10 @@ def train_vectorize(x, y, inp_dict, tgt_dict, mode):
     elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
         seq_len_x = seq_len_finder(x)
         seq_len_y = seq_len_finder(y)
+
     Xtensor = torch.zeros(len(x), seq_len_x+1).long()
     ytensor = torch.zeros(len(x), seq_len_y+1).long()
+
     for i, seq in enumerate(x):
         for t, char in enumerate(seq):
             try:
@@ -255,6 +237,21 @@ def google_train_vectorize(x, y, inp_dict, tgt_dict, lang, mode):
         ytensor[i_y, len(seq_y)] = tgt_dict['EOS']
     return Xtensor, ytensor, seq_len_x, seq_len_y
 
+def test_vectorize(x, inp_dict, mode):
+    if mode in ('w2w', 'c2c'):
+        seq_len_x = seq_len_finder(x)
+    elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
+        seq_len_x = seq_len_finder(x)
+    Xtensor = torch.zeros(len(x), seq_len_x+1).long()
+    for i, seq in enumerate(x):
+        for t, char in enumerate(seq):
+            try:
+                Xtensor[i, t] = inp_dict[seq[t]]
+            except:
+                Xtensor[i, t] = inp_dict['UNK']
+        Xtensor[i, len(seq)] = inp_dict['EOS']
+    return Xtensor, seq_len_x
+
 ''' pytorch utils '''
 
 def pad1d(tensor, pad, permute_dims=True):
@@ -285,3 +282,48 @@ def repackage_hidden(h):
         return Variable(h.data)
     else:
         return tuple(repackage_hidden(v) for v in h)
+
+def mask_matrix(len_list):
+    maxlen = max(len_list)
+    bsz = len(len_list)
+    A = torch.arange(0, maxlen).repeat(bsz, 1) #(N,maxW) - N rows of (0,1,..., maxlen)
+    B = torch.Tensor(len_list).unsqueeze(1) # N,1) - to be broadcasted as (N, maxW) (3,3,..., 3)
+    mask = A.lt(B) # compare each element of broadcasted matrix a < b, 1 if true.
+    mask = Variable(mask.float().cuda())
+    return mask
+
+
+def mask_cnn(lengths, pool_stride):
+    maxlen = max(lengths)
+    bsz = len(lengths)
+    excess_len = maxlen - torch.Tensor(lengths)
+    zero_pool = np.floor(excess_len / pool_stride)
+    mask_len = [i if i>-1 else 0 for i in zero_pool]
+
+    new_seq_len = np.floor(maxlen/pool_stride)
+    A = torch.arange(0, new_seq_len).repeat(bsz, 1) #(N,maxW) - N rows of (0,1,..., maxlen)
+    B = [new_seq_len]*bsz
+    B = torch.Tensor(B) - torch.Tensor(mask_len)
+    B = B.unsqueeze(1)
+    mask = A.lt(B)
+    mask = Variable(mask.float().cuda())
+    return mask
+
+
+def multireplace(string, replacements):
+    """
+    Given a string and a replacement map, it returns the replaced string.
+    :param str string: string to execute replacements on
+    :param dict replacements: replacement dictionary {value to find: value to replace}
+    :rtype: str
+    """
+    # Place longer ones first to keep shorter substrings from matching where the longer ones should take place
+    # For instance given the replacements {'ab': 'AB', 'abc': 'ABC'} against the string 'hey abc', it should produce
+    # 'hey ABC' and not 'hey ABc'
+    substrs = sorted(replacements, key=len, reverse=True)
+
+    # Create a big OR regex that matches any of the substrings to replace
+    regexp = re.compile('|'.join(map(re.escape, substrs)))
+
+    # For each match, look up the new string in the replacements
+    return regexp.sub(lambda match: replacements[match.group(0)], string)
