@@ -9,7 +9,7 @@ import pickle
 import os
 import numpy as np
 from collections import OrderedDict
-from tcc import tcc
+
 
 
 ''' loading data and dict '''
@@ -47,26 +47,21 @@ def build_vocab(file, source, vocab_type, lang, lang_pair):
     # for word, tcc, and bpe
     # tweaked version of: https://github.com/nyu-dl/dl4mt-c2c/blob/master/preprocess/build_dictionary_char.py
     # TODO: figure out why the original function omit characters like Ã.
+    src_name = 'src' if source else 'tgt'
     word_dict = {}
     master_set = set()
     for sample in file:
         set_letter = set(sample)
         master_set = master_set.union(set_letter)
-    if source:
-        # 0 -> ZERO
-        # 1 -> UNK
-        # 2 -> SOS
-        # 3 -> EOS
-        tokens = "ZERO UNK SOS EOS".split()
-    else:
-        tokens = "ZERO EOS UNK".split()
+    tokens = "ZERO UNK SOS EOS".split()
+    master_set = master_set.difference(tokens)
     if vocab_type == 'bpe':
         tokens.append(' ')
     for ii, aa in enumerate(tokens):
         word_dict[aa] = ii
+    print("initialized word %s dict with" % (src_name), word_dict)
     for ii, ww in enumerate(master_set):
         word_dict[ww] = ii + len(tokens)
-    src_name = 'src' if source else 'tgt'
     with open('%s/%s.%s.%s.%s.pkl' % (lang_pair, lang_pair, vocab_type, src_name, lang), 'wb') as f:
         pickle.dump(word_dict, f)
     return word_dict
@@ -91,38 +86,42 @@ def wp_encode_gen(data, lang):
 def filter_data_len(data, target, mode):
     len_order = []
     x_len_order, y_len_order = [], []
+    print(len(data), len(target))
     for i in range(len(target)):
-        # print(len(data), len(target))
         len_data = len(data[i])
         len_target = len(target[i])
-        if mode in ('c2c'):
-            max_len = max((len_data, len_target))
-            len_order.append(max_len)
-        elif mode in ('c2w','tcc2w', 'bpe2w', 'wp2w', 'w2w','bpe2bpe'):
-            x_len_order.append(len_data)
-            y_len_order.append(len_target)
+        # if mode in ('c2c'):
+        #     max_len = max((len_data, len_target))
+        #     len_order.append(max_len)
+        # elif mode in ('c2w','tcc2w', 'bpe2w', 'wp2w', 'w2w','bpe2bpe', 'w2bpe', 'c2bpe'):
+        x_len_order.append(len_data)
+        y_len_order.append(len_target)
 
-#     three_list = sorted(zip(len_order, data, target))
-    if mode in ('w2w', 'bpe2bpe'):
+    if mode in ('w2w', 'bpe2bpe', 'bpe2w', 'tcc2bpe'):
         x_three_list = zip(x_len_order, y_len_order, data, target)
         y_three_list = zip(x_len_order, y_len_order, data, target)
         train_data = [x for lx, ly, x, y in x_three_list if lx < 51 and lx > 0 and ly > 0]
         train_target = [y for lx, ly, x, y in y_three_list if lx < 51 and lx > 0 and ly >0]
-    elif mode == 'c2w':
+    elif mode in ('c2w', 'c2bpe'):
         four_listx = zip(x_len_order, y_len_order, data, target)
         four_listy = zip(x_len_order, y_len_order, data, target)
-        train_data = [x for lx, ly, x, y in four_listx if lx < 251 and ly < 31 and ly > 0]
-        train_target = [y for lx, ly, x, y in four_listy if lx < 251 and ly < 31 and ly > 0]
+        train_data = [x for lx, ly, x, y in four_listx if lx < 251 and ly < 51 and ly > 0]
+        train_target = [y for lx, ly, x, y in four_listy if lx < 251 and ly < 51 and ly > 0]
     elif mode == 'c2c':
-        x_three_list = zip(len_order, data, target)
-        y_three_list = zip(len_order, data, target)
+        x_three_list = zip(x_len_order, data, target)
+        y_three_list = zip(x_len_order, data, target)
         train_data = [x for l, x, y in x_three_list if l < 251 and l > 0]
         train_target = [y for l, x, y in y_three_list if l < 251 and l > 0]
-    elif mode in ('tcc2w', 'bpe2w', 'wp2w'):
+    elif mode in ('tcc2w', 'wp2w', 'w2bpe'):
         four_listx = zip(x_len_order, y_len_order, data, target)
         four_listy = zip(x_len_order, y_len_order, data, target)
-        train_data = [x for lx, ly, x, y in four_listx if lx < 51 and ly < 31 and ly > 0]
-        train_target = [y for lx, ly, x, y in four_listy if lx < 51 and ly < 31 and ly > 0]
+        train_data = [x for lx, ly, x, y in four_listx if lx < 51 and ly < 51 and ly > 0]
+        train_target = [y for lx, ly, x, y in four_listy if lx < 51 and ly < 51 and ly > 0]
+    elif mode in ('bpe2c'):
+        four_listx = zip(x_len_order, y_len_order, data, target)
+        four_listy = zip(x_len_order, y_len_order, data, target)
+        train_data = [x for lx, ly, x, y in four_listx if lx < 51 and ly < 251 and ly > 0]
+        train_target = [y for lx, ly, x, y in four_listy if lx < 51 and ly < 251 and ly > 0]
     else:
         raise Error
     return train_data, train_target
@@ -140,6 +139,7 @@ def sent2vec(x, y, inp_dict, tgt_dict):
     vec_x, vec_y = [], []
     for idx, sample in enumerate(x):
         sent_array = []
+        sent_array.append(inp_dict['SOS'])
         for vocab_x in sample:
             try:
                 vec_word = inp_dict[vocab_x]
@@ -183,74 +183,104 @@ def vec2tensor(x_vec, y_vec):
         ytensor[idx, :lengths_y[idx]] =  torch.LongTensor(s_y)
     return xtensor, ytensor, lengths_x, lengths_y, sorted_idx
 
-# Legacy
-def train_vectorize(x, y, inp_dict, tgt_dict, mode):
-    if mode in ('w2w', 'c2c'):
-        seq_len_x = seq_len_finder(x, y)
-        seq_len_y = seq_len_x
-    elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
-        seq_len_x = seq_len_finder(x)
-        seq_len_y = seq_len_finder(y)
+def sent2vec_google(x, y, inp_dict, tgt_dict, lang):
+    vec_x, vec_y = [], []
+    for idx, sample in enumerate(x):
+        sent_array = []
+        sent_array.append(inp_dict['<%s>' % lang])
+        for vocab_x in sample:
+            try:
+                vec_word = inp_dict[vocab_x]
+            except:
+                vec_word = inp_dict['UNK']
+            sent_array.append(vec_word)
+        sent_array.append(inp_dict['EOS'])
+        vec_x.append(sent_array)
 
-    Xtensor = torch.zeros(len(x), seq_len_x+1).long()
-    ytensor = torch.zeros(len(x), seq_len_y+1).long()
+    for idx, sample in enumerate(y):
+        sent_array = []
+        for vocab_y in sample:
+            try:
+                vec_word = tgt_dict[vocab_y]
+            except:
+                vec_word = tgt_dict['UNK']
+            sent_array.append(vec_word)
+        sent_array.append(tgt_dict['EOS'])
+        vec_y.append(sent_array)
 
-    for i, seq in enumerate(x):
-        for t, char in enumerate(seq):
-            try:
-                Xtensor[i, t] = inp_dict[seq[t]]
-            except:
-                Xtensor[i, t] = inp_dict['UNK']
-        Xtensor[i, len(seq)] = inp_dict['EOS']
-    for i_y, seq_y in enumerate(y):
-        for t_y, char_y in enumerate(seq_y):
-            try:
-                ytensor[i_y, t_y] = tgt_dict[seq_y[t_y]]
-            except:
-                ytensor[i_y, t_y] = tgt_dict['UNK']
-        ytensor[i_y, len(seq_y)] = tgt_dict['EOS']
-    return Xtensor, ytensor, seq_len_x, seq_len_y
+    return vec_x, vec_y
 
-def google_train_vectorize(x, y, inp_dict, tgt_dict, lang, mode):
-    if mode in ('w2w', 'c2c'):
-        seq_len_x = seq_len_finder(x, y)
-        seq_len_y = seq_len_x
-    elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
-        seq_len_x = seq_len_finder(x)
-        seq_len_y = seq_len_finder(y)
-    Xtensor = torch.zeros(len(x), seq_len_x+2).long()
-    ytensor = torch.zeros(len(x), seq_len_y+2).long()
-    for i, seq in enumerate(x):
-        for t, char in enumerate(seq):
-            Xtensor[i, 0] = inp_dict['<%s>' % lang]
-            try:
-                Xtensor[i, t+1] = inp_dict[seq[t]]
-            except:
-                Xtensor[i, t] = inp_dict['UNK']
-        Xtensor[i, len(seq)] = inp_dict['EOS']
-    for i_y, seq_y in enumerate(y):
-        for t_y, char_y in enumerate(seq_y):
-            try:
-                ytensor[i_y, t_y] = tgt_dict[seq_y[t_y]]
-            except:
-                ytensor[i_y, t_y] = tgt_dict['UNK']
-        ytensor[i_y, len(seq_y)] = tgt_dict['EOS']
-    return Xtensor, ytensor, seq_len_x, seq_len_y
 
-def test_vectorize(x, inp_dict, mode):
-    if mode in ('w2w', 'c2c'):
-        seq_len_x = seq_len_finder(x)
-    elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
-        seq_len_x = seq_len_finder(x)
-    Xtensor = torch.zeros(len(x), seq_len_x+1).long()
-    for i, seq in enumerate(x):
-        for t, char in enumerate(seq):
-            try:
-                Xtensor[i, t] = inp_dict[seq[t]]
-            except:
-                Xtensor[i, t] = inp_dict['UNK']
-        Xtensor[i, len(seq)] = inp_dict['EOS']
-    return Xtensor, seq_len_x
+
+''' Legacy '''
+
+# def train_vectorize(x, y, inp_dict, tgt_dict, mode):
+#     if mode in ('w2w', 'c2c'):
+#         seq_len_x = seq_len_finder(x, y)
+#         seq_len_y = seq_len_x
+#     elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
+#         seq_len_x = seq_len_finder(x)
+#         seq_len_y = seq_len_finder(y)
+#
+#     Xtensor = torch.zeros(len(x), seq_len_x+1).long()
+#     ytensor = torch.zeros(len(x), seq_len_y+1).long()
+#
+#     for i, seq in enumerate(x):
+#         for t, char in enumerate(seq):
+#             try:
+#                 Xtensor[i, t] = inp_dict[seq[t]]
+#             except:
+#                 Xtensor[i, t] = inp_dict['UNK']
+#         Xtensor[i, len(seq)] = inp_dict['EOS']
+#     for i_y, seq_y in enumerate(y):
+#         for t_y, char_y in enumerate(seq_y):
+#             try:
+#                 ytensor[i_y, t_y] = tgt_dict[seq_y[t_y]]
+#             except:
+#                 ytensor[i_y, t_y] = tgt_dict['UNK']
+#         ytensor[i_y, len(seq_y)] = tgt_dict['EOS']
+#     return Xtensor, ytensor, seq_len_x, seq_len_y
+#
+# def google_train_vectorize(x, y, inp_dict, tgt_dict, lang, mode):
+#     if mode in ('w2w', 'c2c'):
+#         seq_len_x = seq_len_finder(x, y)
+#         seq_len_y = seq_len_x
+#     elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
+#         seq_len_x = seq_len_finder(x)
+#         seq_len_y = seq_len_finder(y)
+#     Xtensor = torch.zeros(len(x), seq_len_x+2).long()
+#     ytensor = torch.zeros(len(x), seq_len_y+2).long()
+#     for i, seq in enumerate(x):
+#         for t, char in enumerate(seq):
+#             Xtensor[i, 0] = inp_dict['<%s>' % lang]
+#             try:
+#                 Xtensor[i, t+1] = inp_dict[seq[t]]
+#             except:
+#                 Xtensor[i, t] = inp_dict['UNK']
+#         Xtensor[i, len(seq)] = inp_dict['EOS']
+#     for i_y, seq_y in enumerate(y):
+#         for t_y, char_y in enumerate(seq_y):
+#             try:
+#                 ytensor[i_y, t_y] = tgt_dict[seq_y[t_y]]
+#             except:
+#                 ytensor[i_y, t_y] = tgt_dict['UNK']
+#         ytensor[i_y, len(seq_y)] = tgt_dict['EOS']
+#     return Xtensor, ytensor, seq_len_x, seq_len_y
+#
+# def test_vectorize(x, inp_dict, mode):
+#     if mode in ('w2w', 'c2c'):
+#         seq_len_x = seq_len_finder(x)
+#     elif mode in('c2w','tcc2w', 'bpe2w', 'wp2w'):
+#         seq_len_x = seq_len_finder(x)
+#     Xtensor = torch.zeros(len(x), seq_len_x+1).long()
+#     for i, seq in enumerate(x):
+#         for t, char in enumerate(seq):
+#             try:
+#                 Xtensor[i, t] = inp_dict[seq[t]]
+#             except:
+#                 Xtensor[i, t] = inp_dict['UNK']
+#         Xtensor[i, len(seq)] = inp_dict['EOS']
+#     return Xtensor, seq_len_x
 
 ''' pytorch utils '''
 
@@ -292,7 +322,6 @@ def mask_matrix(len_list):
     mask = Variable(mask.float().cuda())
     return mask
 
-
 def mask_cnn(lengths, pool_stride):
     maxlen = max(lengths)
     bsz = len(lengths)
@@ -306,6 +335,12 @@ def mask_cnn(lengths, pool_stride):
     B = torch.Tensor(B) - torch.Tensor(mask_len)
     B = B.unsqueeze(1)
     mask = A.lt(B)
+    mask = Variable(mask.float().cuda())
+    return mask
+
+def decoder_mask(inputs):
+    A = torch.zeros(inputs.size()).cuda()
+    mask = A.lt(inputs.data.float())
     mask = Variable(mask.float().cuda())
     return mask
 
