@@ -314,6 +314,7 @@ def repackage_hidden(h):
         return tuple(repackage_hidden(v) for v in h)
 
 def mask_matrix(len_list):
+    # source: https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/Utils.py
     maxlen = max(len_list)
     bsz = len(len_list)
     A = torch.arange(0, maxlen).repeat(bsz, 1) #(N,maxW) - N rows of (0,1,..., maxlen)
@@ -347,6 +348,7 @@ def decoder_mask(inputs):
 
 def multireplace(string, replacements):
     """
+    Source: https://gist.github.com/bgusach/a967e0587d6e01e889fd1d776c5f3729
     Given a string and a replacement map, it returns the replaced string.
     :param str string: string to execute replacements on
     :param dict replacements: replacement dictionary {value to find: value to replace}
