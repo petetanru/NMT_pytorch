@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
 import math
-from utils import pad1d, mask_cnn
+from utils import pad1d, mask_cnn, decoder_mask
 import torch.nn.utils.rnn as rnn_utils
 
 cudafloat = torch.cuda.FloatTensor
@@ -12,7 +12,7 @@ cudalong = torch.cuda.LongTensor
 class CharEncoder(nn.Module):
     def __init__(self, embed_dim, N, dropout, k_num, k_size, poolstride,
                  en_bi, en_layers, en_H,
-                 num_embed):
+                 num_embed, highway_layers):
         super(CharEncoder, self).__init__()
         self.Ci = embed_dim
         self.k_num = k_num  # channel-out (number of filters)
@@ -23,6 +23,7 @@ class CharEncoder(nn.Module):
         self.en_H = en_H
         self.N = N
         self.en_layers = en_layers
+        self.highway_layers = highway_layers
 
         self.embed = nn.Embedding(num_embed, embed_dim)
 
@@ -38,8 +39,11 @@ class CharEncoder(nn.Module):
                             num_layers=en_layers,
                             dropout=dropout,
                             bidirectional=en_bi)
-        self.gate = nn.Linear(self.k_sum, self.k_sum)
-        self.highway1 = nn.Linear(self.k_sum, self.k_sum)
+
+        self.out_gate = nn.Linear(self.k_sum, self.k_sum)
+        self.out_gate.bias.data.fill_(-2)
+        self.t_gate = nn.Linear(self.k_sum, self.k_sum)
+        self.t_gate.bias.data.fill_(-2)
         self.dropout = nn.Dropout(dropout)
         self.logsoftmax = nn.LogSoftmax()
 
@@ -64,13 +68,19 @@ class CharEncoder(nn.Module):
 
         return result
 
-    def highway(self, x):
+    def highway(self, x, num_layers):
+        '''
+        input - (W/s,N,D=k_sum)
+        output -
+        '''
         x.contiguous()
-        gate = F.sigmoid(self.gate(x.view(-1, self.k_sum)))
-        high1 = gate * F.relu(self.highway1(x.view(-1, self.k_sum)))
-        high2 = (1-gate)*x.view(-1, self.k_sum)
-        result = high1 + high2
-        return result
+        x = x.view(-1, self.k_sum) #(W/s*N, D=k_sum)
+        for i in range(num_layers):
+            output = F.relu(self.out_gate(x))
+            transform_gate = F.sigmoid(self.t_gate(x))
+            carry_gate = 1 - transform_gate
+            x = output*transform_gate + x*carry_gate
+        return x
 
     def forward(self, input, hidden, x_lengths):
         # input - (N,W)
@@ -80,10 +90,9 @@ class CharEncoder(nn.Module):
         x = self.embed(input)  # (N,W,D)
         x = [self.pad_conv_and_pool(x, convk)*x_mask_tensor for convk in self.convks]  # (N,Ci,W) => (N,Co,W/s)
 
-
         x = torch.cat(x, dim=1)  # (N, sum(Co) for all k_width, W/s)
         x = x.permute(2, 0, 1)  # (W/s,N,D=k_sum) prep for rnn
-        x = self.highway(x)
+        x = self.highway(x, num_layers=self.highway_layers)
 
         output, hidden = self.biGRU(x.view(-1, self.N, self.k_sum), hidden)  # (W/s,N,H*bi)
         return output, hidden
@@ -159,7 +168,7 @@ class LuongDecoder(nn.Module):
         # return h0, c0
         return h0
 
-    def forward(self, inputs, encoder_out, hidden, y_mask_list, x_mask_tensor):
+    def forward(self, inputs, encoder_out, hidden, x_mask_tensor):
         W_s, _, _ = encoder_out.size()
 
         # decoder RNN's output
@@ -167,17 +176,22 @@ class LuongDecoder(nn.Module):
         W_t, _, _ = embed.size()
 
         # not sure how to make rnn_utils.pad_packed_sequence compatible with seq_len of 1, so roll out manual mask
-        y_mask_tensor = torch.cuda.FloatTensor(y_mask_list)  # (N)
-        y_mask_tensor = torch.unsqueeze(y_mask_tensor, 0) # (N) => (1,N)
-        y_mask_tensor = torch.unsqueeze(y_mask_tensor, 2) # (1,N) => (1,N,1)
-        y_mask_tensor = Variable(y_mask_tensor)
+        # y_mask_tensor = torch.cuda.FloatTensor(y_mask_list)  # (N)
+        # y_mask_tensor = torch.unsqueeze(y_mask_tensor, 0) # (N) => (1,N)
+        # y_mask_tensor = torch.unsqueeze(y_mask_tensor, 2) # (1,N) => (1,N,1)
+        # y_mask_tensor = Variable(y_mask_tensor)
+
+
+        y_mask_tensor = decoder_mask(inputs)
+        y_mask_tensor = y_mask_tensor.unsqueeze(0)
+        # print("inputs", inputs)
+        # print("y mask tensor", y_mask_tensor)
 
         #TODO: Mask hidden state if target is pad
         rnn_output, hidden = self.gru(embed, hidden) #(W_t,N,H)
         hidden = hidden * y_mask_tensor  # (layers*bi, N, H) * (1,N,1).. using broadcasting
 
-        #TODO: Mask decoder RNN output
-        rnn_output = rnn_output * y_mask_tensor
+
         rnn_output = rnn_output.transpose(0, 1)  # (N,W_t,H)
         rnn_output.contiguous()  # makes a contiguous copy for viewx
 
@@ -220,7 +234,9 @@ class LuongDecoder(nn.Module):
         output = output.view(W_t, self.N, self.out_sz)  # (W_t*N,Out) => (W_t,N,Out)
 
         #TODO: Mask decoder output
+        # print("output before mask", output)
         output = output * y_mask_tensor
+        # print("output after mask", output)
 
         return output, hidden, align_vec.transpose(0, 1)
 
